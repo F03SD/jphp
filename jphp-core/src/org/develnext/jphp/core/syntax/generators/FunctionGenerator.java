@@ -98,6 +98,9 @@ public class FunctionGenerator extends Generator<FunctionStmtToken> {
         argument.setReference(isReference);
         argument.setValue(value);
 
+        if (argument.isReference() && argument.getValue() != null)
+            analyzer.getFunction().variable(argument.getName()).setUsed(true);
+
         return argument;
     }
 
@@ -133,12 +136,13 @@ public class FunctionGenerator extends Generator<FunctionStmtToken> {
 
                 FunctionStmtToken parent = analyzer.getFunction(true);
                 if (argument.isReference() && parent != null) {
-                    parent.getPassedLocal().add(argument.getName());
-                    parent.getUnstableLocal().add(argument.getName());
+                    parent.variable(argument.getName())
+                            .setPassed(true)
+                            .setUnstable(true);
 
                     parent = analyzer.peekClosure();
                     if (parent != null){
-                        parent.getUnstableLocal().add(argument.getName());
+                        parent.variable(argument.getName()).setUnstable(true);
                     }
                 }
             }
@@ -177,8 +181,10 @@ public class FunctionGenerator extends Generator<FunctionStmtToken> {
                 /*if (analyzer.getFunction() != null)
                     unexpectedToken(current);*/
 
-                analyzer.addLocalScope(true);
+                analyzer.addScope(true);
+                FunctionStmtToken oldFunction = analyzer.getFunction();
                 analyzer.setFunction(result);
+
                 BraceExprToken brace = nextAndExpected(iterator, BraceExprToken.class);
                 if (!brace.isSimpleOpened())
                     unexpectedToken(brace, "(");
@@ -188,9 +194,10 @@ public class FunctionGenerator extends Generator<FunctionStmtToken> {
                 processArguments(result, iterator);
                 processBody(result, iterator);
 
-                result.setLocal(analyzer.removeLocalScope());
+                result.setLabels(analyzer.getScope().getLabels());
+                result.setLocal(analyzer.removeScope().getVariables());
 
-                analyzer.setFunction(null);
+                analyzer.setFunction(oldFunction);
                 return result;
             } else if (next instanceof BraceExprToken){
                 // xClosure
@@ -198,12 +205,13 @@ public class FunctionGenerator extends Generator<FunctionStmtToken> {
                     if (closureAllowed){
                         analyzer.pushClosure(result);
 
-                        analyzer.addLocalScope(true);
+                        analyzer.addScope(true);
                         processArguments(result, iterator);
                         processUses(result, iterator);
                         processBody(result, iterator);
                         //boolean thisExists = result.isThisExists();
-                        result.setLocal(analyzer.removeLocalScope());
+                        result.setLabels(analyzer.getScope().getLabels());
+                        result.setLocal(analyzer.removeScope().getVariables());
                         //result.setThisExists(thisExists);
 
                         analyzer.popClosure();
@@ -211,7 +219,7 @@ public class FunctionGenerator extends Generator<FunctionStmtToken> {
                         FunctionStmtToken prevClosure = analyzer.peekClosure();
                         if (prevClosure != null){
                             if (result.isThisExists()) {
-                                analyzer.getLocalScope().add(FunctionStmtToken.thisVariable);
+                                analyzer.getScope().addVariable(FunctionStmtToken.thisVariable);
                                 //prevClosure.setThisExists(true);
                             }
                         }
@@ -220,13 +228,13 @@ public class FunctionGenerator extends Generator<FunctionStmtToken> {
                         for(ArgumentStmtToken argument : result.getUses()){
                             if (argument.isReference()){
                                 if (analyzer.getFunction() != null){
-                                    analyzer.getFunction().getRefLocal().add(argument.getName());
+                                    analyzer.getFunction().variable(argument.getName()).setReference(true);
                                 }
                             }
                             uses.add(argument.getName());
                         }
 
-                        analyzer.getLocalScope().addAll( uses );
+                        analyzer.getScope().addVariables( uses );
                         return result;
                     }
 

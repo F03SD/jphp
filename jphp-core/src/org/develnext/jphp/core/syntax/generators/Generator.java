@@ -1,5 +1,6 @@
 package org.develnext.jphp.core.syntax.generators;
 
+import org.develnext.jphp.core.tokenizer.token.CommentToken;
 import php.runtime.common.Messages;
 import php.runtime.exceptions.ParseException;
 import php.runtime.exceptions.support.ErrorType;
@@ -50,14 +51,14 @@ abstract public class Generator<T extends Token> {
 
 
     @SuppressWarnings("unchecked")
-    protected <T extends Token> T nextAndExpected(ListIterator<Token> iterator, Class<T> clazz){
+    protected <K extends Token> K nextAndExpected(ListIterator<Token> iterator, Class<K> clazz){
         checkUnexpectedEnd(iterator);
 
         Token next = iterator.next();
         if (!isTokenClass(next, clazz))
             unexpectedToken(next);
 
-        return (T) next;
+        return (K) next;
     }
 
     protected boolean isTokenClass(Token token, Class<? extends Token>... classes){
@@ -110,12 +111,18 @@ abstract public class Generator<T extends Token> {
 
     protected Token nextToken(ListIterator<Token> iterator){
         checkUnexpectedEnd(iterator);
-        return iterator.next();
+        Token tk = iterator.next();
+        if (tk instanceof CommentToken)
+            return nextToken(iterator);
+        return tk;
     }
 
     protected Token nextTokenAndPrev(ListIterator<Token> iterator){
         checkUnexpectedEnd(iterator);
         Token result = iterator.next();
+        if (result instanceof CommentToken) {
+            return nextTokenAndPrev(iterator);
+        }
         iterator.previous();
         return result;
     }

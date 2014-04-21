@@ -77,6 +77,7 @@ public class TokenFinder {
         put("new", NewExprToken.class);
         put("clone", CloneExprToken.class);
         put("instanceof", InstanceofExprToken.class);
+        put("insteadof", InsteadofStmtToken.class);
         put(".", ConcatExprToken.class);
         put(":", ColonToken.class);
         put("true", BooleanExprToken.class);
@@ -121,6 +122,7 @@ public class TokenFinder {
         put("enddeclare", EnddeclareStmtToken.class);
         put("break", BreakStmtToken.class);
         put("continue", ContinueStmtToken.class);
+        put("goto", GotoStmtToken.class);
 
         put("unset", UnsetExprToken.class);
         put("isset", IssetExprToken.class);
@@ -130,11 +132,12 @@ public class TokenFinder {
 
         put("class", ClassStmtToken.class);
         put("interface", InterfaceStmtToken.class);
+        put("trait", TraitStmtToken.class);
         put("function", FunctionStmtToken.class);
         put("const", ConstStmtToken.class);
         put("namespace", NamespaceStmtToken.class);
         put("use", NamespaceUseStmtToken.class);
-        put("uses", UsesStmtToken.class);
+        //put("uses", UsesStmtToken.class);
         put("abstract", AbstractStmtToken.class);
         put("final", FinalStmtToken.class);
         put("private", PrivateStmtToken.class);
@@ -180,6 +183,7 @@ public class TokenFinder {
 
         boolean isVar = false;
         boolean isHex = false;
+        boolean isBinary = false;
         boolean isInt = true;
         boolean isFloat = false;
         boolean isName = true;
@@ -225,6 +229,23 @@ public class TokenFinder {
                             ch = word.charAt(j);
                             if (!(ch >= 'A' && ch <= 'F' || ch >= 'a' && ch <= 'f' || Character.isDigit(ch))){
                                 isHex = false;
+                                break;
+                            }
+                        }
+                    } else {
+                        isInt = false;
+                    }
+                    break;
+                case 'b':
+                    if (i == 1 && word.charAt(i - 1) == '0') {
+                        isBinary = true;
+                        isFloat = false;
+                        isInt = true;
+
+                        for(int j = i + 1; j < length; j++){
+                            ch = word.charAt(j);
+                            if (ch != '0' && ch != '1'){
+                                isBinary = false;
                                 break;
                             }
                         }
@@ -295,6 +316,9 @@ public class TokenFinder {
 
         if (isHex)
             return HexExprValue.class;
+
+        if (isBinary)
+            return BinaryExprValue.class;
 
         if (isInt && isFloat)
             return DoubleExprToken.class;

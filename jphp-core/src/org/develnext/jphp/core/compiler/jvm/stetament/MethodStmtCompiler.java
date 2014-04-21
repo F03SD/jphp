@@ -1,11 +1,7 @@
 package org.develnext.jphp.core.compiler.jvm.stetament;
 
-import org.objectweb.asm.Opcodes;
-import org.objectweb.asm.Type;
-import org.objectweb.asm.tree.JumpInsnNode;
-import org.objectweb.asm.tree.LabelNode;
-import org.objectweb.asm.tree.LocalVariableNode;
-import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.*;
+import org.objectweb.asm.tree.*;
 import php.runtime.common.Messages;
 import org.develnext.jphp.core.compiler.common.misc.StackItem;
 import org.develnext.jphp.core.compiler.jvm.misc.JumpItem;
@@ -44,6 +40,7 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
     private int stackSize = 0;
     private int stackMaxSize = 0;
 
+    private Map<String, LabelNode> gotoLabels;
     private Map<String, LocalVariable> localVariables;
     protected String realName;
 
@@ -111,11 +108,15 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
         this.external = external;
     }
 
+    public Stack<TryCatchItem> getTryStack() {
+        return tryStack;
+    }
+
     public Map<String, LocalVariable> getLocalVariables() {
         return localVariables;
     }
 
-    int nextStatementIndex(Class<?> clazz){
+    public int nextStatementIndex(Class<?> clazz){
         AtomicInteger atomic = statementIndexes.get(clazz);
         if (atomic == null)
             statementIndexes.put(clazz, atomic = new AtomicInteger());
@@ -123,7 +124,7 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
         return atomic.getAndIncrement();
     }
 
-    int prevStatementIndex(Class<?> clazz){
+    public int prevStatementIndex(Class<?> clazz){
         AtomicInteger atomic = statementIndexes.get(clazz);
         if (atomic == null)
             statementIndexes.put(clazz, atomic = new AtomicInteger());
@@ -131,15 +132,15 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
         return atomic.getAndDecrement();
     }
 
-    void pushJump(LabelNode breakLabel, LabelNode continueLabel, int stackSize){
+    public void pushJump(LabelNode breakLabel, LabelNode continueLabel, int stackSize){
         jumpStack.add(new JumpItem(breakLabel, continueLabel, stackSize));
     }
 
-    void pushJump(LabelNode breakLabel, LabelNode continueLabel){
+    public void pushJump(LabelNode breakLabel, LabelNode continueLabel){
         pushJump(breakLabel, continueLabel, 0);
     }
 
-    JumpItem getJump(int level){
+    public JumpItem getJump(int level){
         if (jumpStack.size() - level < 0)
             return null;
         if (jumpStack.size() - level >= jumpStack.size())
@@ -148,7 +149,7 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
         return jumpStack.get(jumpStack.size() - level);
     }
 
-    int getJumpStackSize(int level){
+    public int getJumpStackSize(int level){
         int size = 0;
         for(int i = jumpStack.size(); i >= 0 && jumpStack.size() - i < level; i--){
             JumpItem item = getJump(i);
@@ -157,7 +158,7 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
         return size;
     }
 
-    void popJump(){
+    public void popJump(){
         jumpStack.remove(jumpStack.size() - 1);
     }
 
@@ -194,7 +195,23 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
         return stack.peek();
     }
 
-    LocalVariable addLocalVariable(String variable, LabelNode label, Class clazz){
+    public LabelNode getGotoLabel(String name) {
+        return gotoLabels == null ? null : gotoLabels.get(name.toLowerCase());
+    }
+
+    public LabelNode getOrCreateGotoLabel(String name) {
+        name = name.toLowerCase();
+        if (gotoLabels == null)
+            gotoLabels = new HashMap<String, LabelNode>();
+
+        LabelNode label = gotoLabels.get(name);
+        if (label == null)
+            gotoLabels.put(name, label = new LabelNode());
+
+        return label;
+    }
+
+    public LocalVariable addLocalVariable(String variable, LabelNode label, Class clazz){
         LocalVariable result;
         localVariables.put(
                 variable,
@@ -203,7 +220,7 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
         return result;
     }
 
-    LocalVariable getOrAddLocalVariable(String variable, LabelNode label, Class clazz){
+    public LocalVariable getOrAddLocalVariable(String variable, LabelNode label, Class clazz){
         LocalVariable local = getLocalVariable(variable);
         if (local == null){
             local = addLocalVariable(variable, label, clazz);
@@ -216,11 +233,11 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
         return local;
     }
 
-    LocalVariable addLocalVariable(String variable, LabelNode label){
+    public LocalVariable addLocalVariable(String variable, LabelNode label){
         return addLocalVariable(variable, label, Memory.class);
     }
 
-    LocalVariable getLocalVariable(String variable){
+    public LocalVariable getLocalVariable(String variable){
         return localVariables.get(variable);
     }
 
@@ -294,7 +311,7 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
                     LocalVariable local = addLocalVariable(argument.getName().getName(), label, Memory.class);
                     if (argument.isReference()){
                         local.setReference(true);
-                        statement.getUnstableLocal().add(argument.getName());
+                        statement.variable(argument.getName()).setUnstable(true);
                     }
 
                     expressionCompiler.writePushDup();
@@ -310,8 +327,9 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
 
             for(ArgumentStmtToken argument : statement.getArguments()){
                 if (argument.isReference()){
-                    statement.getRefLocal().add(argument.getName());
-                    statement.getUnstableLocal().add(argument.getName());
+                    statement.variable(argument.getName())
+                            .setReference(true)
+                            .setUnstable(true);
                 }
 
                 LabelNode undefined = new LabelNode();
@@ -320,23 +338,25 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
                 expressionCompiler.writeDefineVariable(argument.getName());
                 LocalVariable local = getLocalVariable(argument.getName().getName());
 
-                expressionCompiler.writeVarLoad(args);
-                expressionCompiler.writePushGetFromArray(i, Memory.class);
-                expressionCompiler.writeVarAssign(local, argument.getName(), true, false);
+                if (local != null) {
+                    expressionCompiler.writeVarLoad(args);
+                    expressionCompiler.writePushGetFromArray(i, Memory.class);
+                    expressionCompiler.writeVarAssign(local, argument.getName(), true, false);
 
-                // if length <= i then undefined
-                node.instructions.add(new JumpInsnNode(Opcodes.IFNONNULL, next));
-                expressionCompiler.stackPop();
+                    // if length <= i then undefined
+                    node.instructions.add(new JumpInsnNode(Opcodes.IFNONNULL, next));
+                    expressionCompiler.stackPop();
 
-                if (argument.getValue() == null)
-                    expressionCompiler.writePushNull();
-                else
-                    expressionCompiler.writeExpression(argument.getValue(), true, false);
+                    if (argument.getValue() == null)
+                        expressionCompiler.writePushNull();
+                    else
+                        expressionCompiler.writeExpression(argument.getValue(), true, false);
 
-                expressionCompiler.writeVarAssign(local, argument.getName(), false, false);
-                node.instructions.add(next);
+                    expressionCompiler.writeVarAssign(local, argument.getName(), false, false);
+                    node.instructions.add(next);
 
-                local.pushLevel();
+                    local.pushLevel();
+                }
 
                 i++;
             }
@@ -364,6 +384,7 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
                     variable.index
             ));
         }
+
         //node.maxStack = this.stackMaxSize;  !!! we don't need this, see: ClassWriter.COMPUTE_FRAMES
         //node.maxLocals = this.localVariables.size();
     }
@@ -396,6 +417,14 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
                 parameters[i].setName(argument.getName().getName());
                 parameters[i].setTrace(argument.toTraceInfo(compiler.getContext()));
 
+                parameters[i].setMutable(
+                        statement.isDynamicLocal() || statement.variable(argument.getName()).isMutable()
+                );
+
+                parameters[i].setUsed(
+                        !statement.isUnusedVariable(argument.getName())
+                );
+
                 parameters[i].setType(argument.getHintType());
                 if (argument.getHintTypeClass() != null)
                     parameters[i].setTypeClass(argument.getHintTypeClass().getName());
@@ -409,8 +438,10 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
                     if (value.isSingle()) {
                         if (value.getSingle() instanceof NameToken){
                             parameters[i].setDefaultValueConstName(((NameToken) value.getSingle()).getName());
-                            if (defaultValue == null)
+                            if (defaultValue == null) {
                                 defaultValue = (new ConstantMemory(((NameToken) value.getSingle()).getName()));
+                                parameters[i].setMutable(true);
+                            }
                         } else if (value.getSingle() instanceof StaticAccessExprToken){
                             StaticAccessExprToken access = (StaticAccessExprToken)value.getSingle();
 
@@ -425,6 +456,7 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
                                         ((NameToken) access.getClazz()).getName() + "::" +
                                         ((NameToken) access.getField()).getName()
                                 );
+                                parameters[i].setMutable(true);
                             }
                         }
                     }
@@ -437,15 +469,6 @@ public class MethodStmtCompiler extends StmtCompiler<MethodEntity> {
 
                     parameters[i].setDefaultValue(defaultValue);
                 }
-
-                /*if (argument.getValue() != null){
-                    ExpressionStmtCompiler expressionCompiler = new ExpressionStmtCompiler(this, null);
-                    Memory result = expressionCompiler.writeExpression(argument.getValue(), true, true);
-                    if (result == null){
-                        unexpectedToken(argument.getValue().getTokens().get(0));
-                    }
-                    parameters[i].setDefaultValue( result );
-                }   */
                 i++;
             }
             entity.setParameters(parameters);

@@ -81,6 +81,10 @@ public class SimpleExpressionTest extends JvmCompilerCase {
 
         memory = run("1.0 . 'bar'");
         Assert.assertEquals("1bar", memory.toString());
+
+        memory = run("$x = 'foo';\n" +
+                "return 'bar' . (string)$x;", false);
+        Assert.assertEquals("barfoo", memory.toString());
     }
 
     @Test
@@ -267,6 +271,11 @@ public class SimpleExpressionTest extends JvmCompilerCase {
         Assert.assertTrue(memory.valueOfIndex(0).isArray());
         Assert.assertEquals(2, memory.valueOfIndex(0).toValue(ArrayMemory.class).size());
         Assert.assertEquals(2, memory.valueOfIndex(1).toValue(ArrayMemory.class).size());
+
+        // test logic and array
+        memory = runDynamic("array(1 && 1, 2);");
+        Assert.assertTrue(memory.isArray());
+        Assert.assertEquals(2, memory.toValue(ArrayMemory.class).size());
     }
 
     @Test
@@ -324,5 +333,39 @@ public class SimpleExpressionTest extends JvmCompilerCase {
 
         memory = runDynamic("$x = 100500; return \"foo $x bar\";", false);
         Assert.assertEquals("foo 100500 bar", memory.toString());
+    }
+
+    @Test
+    public void testStringIdentical() {
+        Memory memory = runDynamic("$a = 'foo';\n" +
+                "return ($a === 'foo' ? 1 : 0) . ('foo' === $a ? 1 : 0);", false);
+        Assert.assertEquals("11", memory.toString());
+    }
+
+    @Test
+    public void testStringCharAt() {
+        Memory memory;
+
+        memory = runDynamic("$x = 'foobar'; return $x[3];", false);
+        Assert.assertEquals("b", memory.toString());
+
+        memory = runDynamic("$x = 'foobar'; $x[3] = 'B'; return $x;", false);
+        Assert.assertEquals("fooBar", memory.toString());
+
+        memory = runDynamic("$x = 'foobar'; $x[6] = '1'; return $x;", false);
+        Assert.assertEquals("foobar1", memory.toString());
+
+        memory = runDynamic("$x = 'foobar'; $x[7] = '1'; $x[7] = '2'; return $x;", false);
+        Assert.assertEquals("foobar\32" + "2", memory.toString());
+
+        memory = runDynamic("$x = 'foobar'; $x[3] = ''; return $x;", false);
+        Assert.assertEquals("foo"+ '\0' + "ar", memory.toString());
+    }
+
+    @Test
+    public void testBinaryIntegers() {
+        Memory memory = runDynamic("0b11111111");
+        Assert.assertEquals(255, memory.toLong());
+        Assert.assertEquals(Memory.Type.INT, memory.type);
     }
 }

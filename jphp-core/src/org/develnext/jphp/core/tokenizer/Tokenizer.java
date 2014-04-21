@@ -1,5 +1,7 @@
 package org.develnext.jphp.core.tokenizer;
 
+import org.develnext.jphp.core.tokenizer.token.expr.ValueExprToken;
+import org.develnext.jphp.core.tokenizer.token.expr.value.ShellExecExprToken;
 import php.runtime.common.Directive;
 import php.runtime.common.Messages;
 import php.runtime.exceptions.ParseException;
@@ -192,7 +194,7 @@ public class Tokenizer {
         return checkNewLine(ch, false);
     }
 
-    protected StringExprToken readString(StringExprToken.Quote quote, int startPosition, int startLine){
+    protected ValueExprToken readString(StringExprToken.Quote quote, int startPosition, int startLine){
         int i = currentPosition + 1, pos = relativePosition + 1;
         StringExprToken.Quote ch_quote = null;
         boolean slash = false;
@@ -211,8 +213,8 @@ public class Tokenizer {
 
                 if (docType == null && GrammarUtils.isQuote(ch) != null) {
                     docType = GrammarUtils.isQuote(ch);
-                } else if (docType != null && docType == GrammarUtils.isQuote(ch)){
-                    if (i + 1 >= codeLength || !GrammarUtils.isNewline(code.charAt(i + 1))){
+                } else if (docType != null && docType == GrammarUtils.isQuote(ch)) {
+                    if (i + 1 >= codeLength || !GrammarUtils.isNewline(code.charAt(i + 1))) {
                         throw new ParseException(
                                 Messages.ERR_PARSE_UNEXPECTED_END_OF_STRING.fetch(),
                                 new TraceInfo(context, currentLine, currentLine, pos + 1, pos + 1)
@@ -221,7 +223,9 @@ public class Tokenizer {
                     i += 1;
                     break;
                     // nop
-                } else if (GrammarUtils.isEngLetter(ch) || (tmp.length() != 0 && Character.isDigit(ch))){
+                } else if (tmp.length() == 0 && (ch == ' ' || ch == '\t')) {
+                    //nop
+                } else if (GrammarUtils.isEngLetter(ch) || ch == '_' || (tmp.length() != 0 && Character.isDigit(ch))){
                     tmp.append(ch);
                 } else if (tmp.length() > 0 && checkNewLine(ch)){
                     pos = 0;
@@ -325,8 +329,11 @@ public class Tokenizer {
 
                         String sub = code.substring(i, j + 1);
                         segments.add(new StringExprToken.Segment(
-                                i - currentPosition - 1, j - currentPosition, dynamic == 2
+                                sb.length(), sb.length() + sub.length(), dynamic == 2
                         ));
+                        /*segments.add(new StringExprToken.Segment(
+                                i - currentPosition - 1, j - currentPosition, dynamic == 2
+                        ));*/
                         sb.append(sub);
                         i = j;
                         continue;
@@ -478,6 +485,9 @@ public class Tokenizer {
         meta.setWord(sb.toString());
 
         StringExprToken expr = new StringExprToken(meta, quote);
+        if (expr.getQuote() == StringExprToken.Quote.SHELL)
+            return new ShellExecExprToken(meta);
+
         expr.setSegments(segments);
         return expr;
     }
@@ -496,7 +506,13 @@ public class Tokenizer {
             boolean closed = false;
             switch (kind){
                 case SIMPLE:
-                    closed = (GrammarUtils.isNewline(ch)); break;
+                    closed = (GrammarUtils.isNewline(ch));
+                    if (GrammarUtils.isCloseTag(String.valueOf(new char[]{prev_ch, ch}))) {
+                        i -= 2;
+                        closed = true;
+                    }
+
+                    break;
                 case DOCTYPE:
                 case BLOCK:
                     closed = (GrammarUtils.isCloseComment(String.valueOf(new char[]{prev_ch, ch}))); break;
@@ -544,20 +560,20 @@ public class Tokenizer {
         boolean e_char = false;
 
         i = currentPosition;
-        boolean is_hex = code.charAt(i) == '0'
+        boolean isHex = code.charAt(i) == '0'
                 && (i < codeLength && Character.toLowerCase(code.charAt(i + 1)) == 'x');
-
-        if (is_hex)
+        boolean isBinary = code.charAt(i) == '0' && (i < codeLength && code.charAt(i + 1) == 'b');
+        if (isHex || isBinary)
             i += 2;
 
         for(; i < codeLength; i++){
             char ch = code.charAt(i);
 
-            if (!is_hex && GrammarUtils.isFloatDot(ch)){
+            if (!isHex && GrammarUtils.isFloatDot(ch)){
                 if (dot)
                     break;
                 dot = true;
-            } else if (!is_hex && (ch == 'e' || ch == 'E')){
+            } else if (!isHex && (ch == 'e' || ch == 'E')){
                 if (e_char)
                     break;
 
@@ -571,7 +587,9 @@ public class Tokenizer {
                         i++;
                 }
                 e_char = true;
-            } else if (is_hex && ((ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f'))){
+            } else if (isHex && ((ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f'))) {
+                // nop
+            } else if (isBinary && (ch == '0' || ch == '1')) {
                 // nop
             } else if (!Character.isDigit(ch))
                 break;
@@ -611,7 +629,6 @@ public class Tokenizer {
                 prev_ch = code.charAt(currentPosition - 1);
 
             checkNewLine(ch);
-
 
             if (rawMode){
                 if (GrammarUtils.isOpenTag(String.valueOf(new char[]{prev_ch, ch}))){

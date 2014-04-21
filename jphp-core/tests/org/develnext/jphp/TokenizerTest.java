@@ -56,7 +56,7 @@ public class TokenizerTest {
     @Test
     public void testScalarTokens() throws IOException {
         Token token;
-        Tokenizer tokenizer = new Tokenizer(new Context( "10 3.3 'foo' '' \"xyz\" 0xCC true false"));
+        Tokenizer tokenizer = new Tokenizer(new Context( "10 3.3 'foo' '' \"xyz\" 0xCC 0b0011 true false"));
 
         token = tokenizer.nextToken();
         assertTrue(token instanceof IntegerExprToken);
@@ -86,6 +86,10 @@ public class TokenizerTest {
         assertEquals(new BigInteger("CC", 16).longValue(), ((HexExprValue) token).getValue());
 
         token = tokenizer.nextToken();
+        assertTrue(token instanceof BinaryExprValue);
+        assertEquals(new BigInteger("0011", 2).longValue(), ((BinaryExprValue) token).getValue());
+
+        token = tokenizer.nextToken();
         assertTrue(token instanceof BooleanExprToken);
         assertEquals(true, ((BooleanExprToken) token).getValue());
 
@@ -109,6 +113,21 @@ public class TokenizerTest {
         token = tokenizer.nextToken();
         assertTrue(token instanceof StringExprToken);
         assertEquals("foo\"bar", ((StringExprToken) token).getValue());
+    }
+
+    @Test
+    public void testMagicString() throws IOException {
+        Token token;
+        Tokenizer tokenizer = new Tokenizer(new Context("\"\\.{$foo}\""));
+
+        token = tokenizer.nextToken();
+        assertTrue(token instanceof StringExprToken);
+        assertEquals(".{$foo}", ((StringExprToken) token).getValue());
+        assertEquals(1, ((StringExprToken) token).getSegments().size());
+
+        StringExprToken.Segment segment =((StringExprToken) token).getSegments().get(0);
+        assertEquals(1, segment.from);
+        assertEquals(7, segment.to);
     }
 
     @Test

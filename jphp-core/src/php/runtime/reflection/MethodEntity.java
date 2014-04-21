@@ -1,5 +1,7 @@
 package php.runtime.reflection;
 
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.MethodNode;
 import php.runtime.Memory;
 import php.runtime.annotation.Reflection;
 import php.runtime.common.HintType;
@@ -7,6 +9,7 @@ import php.runtime.common.Messages;
 import php.runtime.common.Modifier;
 import php.runtime.env.Context;
 import php.runtime.env.Environment;
+import php.runtime.env.TraceInfo;
 import php.runtime.exceptions.CriticalException;
 import php.runtime.exceptions.support.ErrorType;
 import php.runtime.ext.support.Extension;
@@ -21,6 +24,8 @@ import java.lang.reflect.Method;
 
 public class MethodEntity extends AbstractFunctionEntity {
     protected ClassEntity clazz;
+    protected ClassEntity trait;
+    protected MethodNode cachedMethodNode;
     protected Extension extension;
     protected MethodEntity prototype;
 
@@ -63,6 +68,7 @@ public class MethodEntity extends AbstractFunctionEntity {
     public MethodEntity(Extension extension, Method method){
         this((Context)null);
         this.extension = extension;
+        this.usesStackTrace = true;
 
         Reflection.Signature signature = method.getAnnotation(Reflection.Signature.class);
         do {
@@ -112,6 +118,25 @@ public class MethodEntity extends AbstractFunctionEntity {
         }
 
         nativeMethod = method;
+    }
+
+    public MethodNode getMethodNode() {
+        if (cachedMethodNode != null)
+            return cachedMethodNode;
+
+        synchronized (this) {
+            if (cachedMethodNode != null)
+                return cachedMethodNode;
+
+            ClassNode classNode = clazz.getClassNode();
+            for(Object m : classNode.methods) {
+                MethodNode method = (MethodNode) m;
+                if (method.name.equals(getInternalName()) ){
+                    return cachedMethodNode = method;
+                }
+            }
+        }
+        throw new CriticalException("Cannot find MethodNode for method - " + name + "(" + getSignature() + ")");
     }
 
     public Closure getClosure(Environment env, final IObject object) {
@@ -205,16 +230,7 @@ public class MethodEntity extends AbstractFunctionEntity {
         } catch (InvocationTargetException e){
             return environment.__throwException(e);
         } finally {
-            if (arguments != null){
-                int x = 0;
-                if (this.parameters != null)
-                for(ParameterEntity argument : this.parameters){
-                    if (!argument.isReference) {
-                        arguments[x].unset();
-                    }
-                    x++;
-                }
-            }
+            unsetArguments(arguments);
         }
     }
 
@@ -324,7 +340,11 @@ public class MethodEntity extends AbstractFunctionEntity {
     }
 
     public String getSignatureString(boolean withArgs){
-        StringBuilder sb = new StringBuilder(getClazz().getName() + "::" + getName() + "(");
+        String ownerName = getClazz().getName();
+        if (getTrait() != null)
+            ownerName = getTrait().getName();
+
+        StringBuilder sb = new StringBuilder(ownerName + "::" + getName() + "(");
 
         int i = 0;
         if (parameters != null && withArgs)
@@ -356,9 +376,21 @@ public class MethodEntity extends AbstractFunctionEntity {
         return signature = sb.toString();
     }
 
-    public boolean equalsBySignature(MethodEntity method){
-        return getSignature().equals(method.getSignature());
+    public boolean equalsBySignature(MethodEntity method, boolean strong){
+        if (strong)
+            return getSignature().equals(method.getSignature());
+        else {
+            int cnt1 = parameters != null ? parameters.length : 0;
+            int cnt2 = method.parameters != null ? method.parameters.length : 0;
+
+            return cnt1 == cnt2;
+        }
     }
+
+    public boolean equalsBySignature(MethodEntity method){
+        return equalsBySignature(method, true);
+    }
+
 
     public boolean equalsByHintTypingSignature(MethodEntity method){
         if (parameters == null || method.parameters == null)
@@ -429,5 +461,50 @@ public class MethodEntity extends AbstractFunctionEntity {
                 return 1;
         }
         return 2;
+    }
+
+    public ClassEntity getTrait() {
+        return trait;
+    }
+
+    public void setTrait(ClassEntity trait) {
+        this.trait = trait;
+    }
+
+    public int getRequiredParamCount() {
+        int cnt = 0;
+        if (parameters != null)
+        for(ParameterEntity e : parameters) {
+            if (e.getDefaultValue() != null)
+                break;
+        }
+        return cnt;
+    }
+
+    public MethodEntity duplicateForInject() {
+        MethodEntity methodEntity = new MethodEntity(this.context);
+        methodEntity.setExtension(getExtension());
+        methodEntity.setAbstract(isAbstract);
+        methodEntity.setFinal(isFinal);
+        methodEntity.setDynamicSignature(isDynamicSignature());
+        methodEntity.setModifier(modifier);
+        methodEntity.setName(name);
+        methodEntity.setStatic(isStatic);
+        methodEntity.setAbstractable(isAbstractable());
+        methodEntity.setDocComment(getDocComment());
+        methodEntity.setParameters(parameters);
+        methodEntity.setReturnReference(isReturnReference());
+        methodEntity.setEmpty(isEmpty);
+        methodEntity.setImmutable(isImmutable);
+        methodEntity.setResult(result);
+        methodEntity.setUsesStackTrace(isUsesStackTrace());
+        methodEntity.setDeprecated(isDeprecated());
+        methodEntity.setInternalName(getInternalName());
+        if (trace == null || trace == TraceInfo.UNKNOWN)
+            methodEntity.setTrace(getClazz().getTrace());
+        else
+            methodEntity.setTrace(trace);
+
+        return methodEntity;
     }
 }

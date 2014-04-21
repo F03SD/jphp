@@ -3,6 +3,7 @@ package php.runtime.env;
 import php.runtime.Memory;
 import php.runtime.annotation.Reflection;
 import php.runtime.common.LangMode;
+import php.runtime.exceptions.ConflictException;
 import php.runtime.exceptions.CriticalException;
 import php.runtime.ext.CoreExtension;
 import php.runtime.ext.JavaExtension;
@@ -30,9 +31,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class CompileScope {
+    public final int id;
+
     protected RuntimeClassLoader classLoader;
     public final Set<String> superGlobals;
 
+    protected final static AtomicInteger scopeCount = new AtomicInteger(0);
     protected final AtomicInteger moduleCount = new AtomicInteger(0);
     protected final AtomicLong classCount = new AtomicLong(0);
     protected final AtomicLong methodCount = new AtomicLong(0);
@@ -58,6 +62,7 @@ public class CompileScope {
     public LangMode langMode = LangMode.JPHP;
 
     public CompileScope(CompileScope parent) {
+        id = scopeCount.getAndIncrement();
         classLoader = parent.classLoader;
 
         moduleMap = new ConcurrentHashMap<String, ModuleEntity>();
@@ -93,6 +98,7 @@ public class CompileScope {
     }
 
     public CompileScope() {
+        id = scopeCount.getAndIncrement();
         classLoader = new RuntimeClassLoader(Thread.currentThread().getContextClassLoader());
 
         moduleMap = new ConcurrentHashMap<String, ModuleEntity>();
@@ -198,18 +204,38 @@ public class CompileScope {
         compileClassMap.put(el.getLowerName(), el);
     }
 
-    public void registerExtension(Extension extension){
+    public void registerExtension(Extension extension) {
+        if (extensions.containsKey(extension.getName()))
+            return;
+
+        // required
         for(String dep : extension.getRequiredExtensions()){
             try {
                 Extension el = (Extension) Class.forName(dep).newInstance();
                 registerExtension(el);
-            } catch (InstantiationException e) {
-                throw new CriticalException(e);
-            } catch (IllegalAccessException e) {
-                throw new CriticalException(e);
-            } catch (ClassNotFoundException e) {
+            } catch (Exception e) {
                 throw new CriticalException(e);
             }
+        }
+
+        // optional
+        for (String dep : extension.getOptionalExtensions()) {
+            try {
+                Extension el = (Extension) Class.forName(dep).newInstance();
+                registerExtension(el);
+            } catch (ClassNotFoundException e) {
+                // do nothing ...
+            } catch (Exception e) {
+                throw new CriticalException(e);
+            }
+        }
+
+        // conflicts
+        for(String dep : extension.getConflictExtensions()) {
+            if (extensions.containsKey(dep))
+                throw new ConflictException(
+                        "'" + dep + "' extension conflicts with '" + extension.getClass().getName() + "'"
+                );
         }
 
         extension.onRegister(this);
@@ -333,5 +359,22 @@ public class CompileScope {
 
     public JVMStackTracer getStackTracer(){
         return getStackTracer(Thread.currentThread().getStackTrace());
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof CompileScope)) return false;
+
+        CompileScope that = (CompileScope) o;
+
+        if (id != that.id) return false;
+
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        return id;
     }
 }

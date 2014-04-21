@@ -106,7 +106,7 @@ abstract public class ValueExprToken extends ExprToken {
     }
 
     public static boolean isConstable(Token token, boolean arrays){
-        if (token instanceof NameToken && !(token instanceof FulledNameToken))
+        if (token instanceof NameToken)
             return true;
 
         if (token instanceof IntegerExprToken)
@@ -118,14 +118,20 @@ abstract public class ValueExprToken extends ExprToken {
         if (token instanceof HexExprValue)
             return true;
 
+        if (token instanceof BinaryExprValue)
+            return true;
+
         if (token instanceof StringExprToken){
             if (((StringExprToken) token).getSegments().isEmpty())
                 return true;
         }
 
         if (token instanceof StaticAccessExprToken){
-            if (!((StaticAccessExprToken) token).isGetStaticField()
-                && ((StaticAccessExprToken) token).getClazz() instanceof NameToken)
+            StaticAccessExprToken sa = (StaticAccessExprToken) token;
+            if (!sa.isGetStaticField()
+                    && (sa.getClazz() instanceof NameToken
+                        || sa.getClazz() instanceof SelfExprToken
+                        || sa.getClazz() instanceof ParentExprToken))
                 return true;
         }
 

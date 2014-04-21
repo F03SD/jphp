@@ -68,6 +68,12 @@ public class ArraysTest extends JvmCompilerCase {
     }
 
     @Test
+    public void testArrayPushRefAssign(){
+        Memory memory = includeResource("arrays/array_push_ref_assign.php");
+        Assert.assertEquals("success", memory.toString());
+    }
+
+    @Test
     public void testCompare(){
         check("arrays/compare.php");
     }
@@ -75,5 +81,15 @@ public class ArraysTest extends JvmCompilerCase {
     @Test
     public void testPlus(){
         check("arrays/plus.php");
+    }
+
+    @Test
+    public void testArrayReturn() {
+        Memory memory = runDynamic("$baseDir = 'foobar_'; return array(" +
+                "    'a' => $baseDir . 'bla',);", false);
+
+        Assert.assertTrue(memory.isArray());
+        Assert.assertEquals("foobar_bla", memory.valueOfIndex("a").toString());
+        Assert.assertEquals(1, memory.toValue(ArrayMemory.class).size());
     }
 }

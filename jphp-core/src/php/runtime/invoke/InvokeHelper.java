@@ -1,11 +1,15 @@
 package php.runtime.invoke;
 
+import php.runtime.Information;
 import php.runtime.Memory;
+import php.runtime.common.HintType;
 import php.runtime.common.Messages;
 import php.runtime.env.Environment;
 import php.runtime.env.TraceInfo;
 import php.runtime.exceptions.FatalException;
 import php.runtime.exceptions.support.ErrorType;
+import php.runtime.invoke.cache.FunctionCallCache;
+import php.runtime.invoke.cache.MethodCallCache;
 import php.runtime.lang.IObject;
 import php.runtime.memory.ArrayMemory;
 import php.runtime.memory.ObjectMemory;
@@ -128,14 +132,16 @@ final public class InvokeHelper {
         int i = 0;
         if (passed != null)
         for(ParameterEntity param : parameters){
+            if (!param.isUsed() && param.getType() == HintType.ANY) continue;
+
             Memory arg = passed[i];
             if (arg == null) {
                 Memory def = param.getDefaultValue();
                 if (def != null){
-                    if (!param.isReference())
-                        passed[i] = def.toImmutable(env, trace);
-                    else
-                        passed[i] = new ReferenceMemory(def.toImmutable(env, trace));
+                    if (!param.isReference()) {
+                        passed[i] = param.isMutable() ? def.toImmutable(env, trace) : def;
+                    } else
+                        passed[i] = new ReferenceMemory(param.isMutable() ? def.toImmutable(env, trace) : def);
 
                 } else {
                     if (param.getTypeClass() != null)
@@ -153,8 +159,9 @@ final public class InvokeHelper {
                         env.error(trace, ErrorType.E_ERROR, "Only variables can be passed by reference");
                         passed[i] = new ReferenceMemory(arg);
                     }
-                } else
-                    passed[i] = arg.toImmutable();
+                } else {
+                        passed[i] = param.isMutable() ? arg.toImmutable() : arg.toValue();
+                }
             }
 
             if (!param.checkTypeHinting(env, passed[i])){
@@ -165,6 +172,10 @@ final public class InvokeHelper {
         return passed;
     }
 
+    /**
+     * Method is invoked via bytecode
+     * @throws Throwable
+     */
     public static Memory callAny(Memory method, Memory[] args, Environment env, TraceInfo trace)
             throws Throwable {
         method = method.toImmutable();
@@ -200,7 +211,8 @@ final public class InvokeHelper {
                         trace,
                         className, className.toLowerCase(),
                         methodName, methodName.toLowerCase(),
-                        args
+                        args,
+                        null, 0
                 );
             }
         } else {
@@ -213,10 +225,11 @@ final public class InvokeHelper {
                         env, trace,
                         className, className.toLowerCase(),
                         methodName, methodName.toLowerCase(),
-                        args
+                        args,
+                        null, 0
                 );
             } else {
-                return InvokeHelper.call(env, trace, methodName.toLowerCase(), methodName, args);
+                return InvokeHelper.call(env, trace, methodName.toLowerCase(), methodName, args, null, 0);
             }
         }
     }
@@ -228,49 +241,83 @@ final public class InvokeHelper {
         Memory result = function.getImmutableResult();
         if (result != null) return result;
 
-        if (trace != null) env.pushCall(trace, null, args, function.getName(), null, null);
+        if (trace != null && function.isUsesStackTrace())
+            env.pushCall(trace, null, args, function.getName(), null, null);
+
         try {
             result = function.invoke(env, trace, passed);
         } finally {
-            if (trace != null)
+            if (trace != null && function.isUsesStackTrace())
                 env.popCall();
         }
         return result;
     }
 
     public static Memory call(Environment env, TraceInfo trace, String sign, String originName,
-                              Memory[] args) throws Throwable {
-        FunctionEntity function = env.functionMap.get(sign);
+                              Memory[] args, FunctionCallCache callCache, int cacheIndex) throws Throwable {
+        FunctionEntity function = null;
+
+        if (callCache != null)
+            function = callCache.get(env, cacheIndex);
+
         if (function == null) {
-            env.error(trace, Messages.ERR_CALL_TO_UNDEFINED_FUNCTION.fetch(originName));
-            return Memory.NULL;
+            function = env.functionMap.get(sign);
+            if (function != null && callCache != null) {
+                callCache.put(env, cacheIndex, function);
+            }
         }
+
+        if (function == null) {
+            if (sign.charAt(0) != Information.NAMESPACE_SEP_CHAR) { // for global style invoke
+                int p = sign.lastIndexOf(Information.NAMESPACE_SEP_CHAR);
+                if (p > -1)
+                    function = env.functionMap.get(sign.substring(p + 1));
+            }
+
+            if (function == null) {
+                env.error(trace, Messages.ERR_CALL_TO_UNDEFINED_FUNCTION.fetch(originName));
+                return Memory.NULL;
+            }
+
+            if (callCache != null) {
+                callCache.put(env, cacheIndex, function);
+            }
+        }
+
         return call(env, trace, function, args);
     }
 
     public static Memory callStaticDynamic(Environment env, TraceInfo trace,
                                            String originClassName, String className,
                                            String originMethodName, String methodName,
-                                           Memory[] args) throws Throwable {
+                                           Memory[] args, MethodCallCache callCache, int cacheIndex) throws Throwable {
         return callStatic(
                 env, trace,
                 className, methodName,
                 originClassName, originMethodName,
-                args
+                args,
+                callCache, cacheIndex
         );
     }
 
     public static Memory callStatic(Environment env, TraceInfo trace,
                                     String className, String methodName, String originClassName, String originMethodName,
-                                    Memory[] args)
+                                    Memory[] args, MethodCallCache callCache, int cacheIndex)
             throws Throwable {
+        if (callCache != null) {
+            MethodEntity entity = callCache.get(env, cacheIndex);
+            if (entity != null) {
+                return callStatic(env, trace, entity, args, false);
+            }
+        }
+
         ClassEntity classEntity = env.fetchClass(originClassName, className, true);
 
         MethodEntity method = classEntity == null ? null : classEntity.findMethod(methodName);
         Memory[] passed = null;
 
-        IObject maybeObject = env.getLateObject();
         if (method == null){
+            IObject maybeObject = env.getLateObject();
             if (maybeObject != null && maybeObject.getReflection().isInstanceOf(classEntity))
                 return ObjectInvokeHelper.invokeMethod(
                         new ObjectMemory(maybeObject), originMethodName, methodName, env, trace, args
@@ -296,6 +343,7 @@ final public class InvokeHelper {
         }
 
         if (!method.isStatic()) {
+            IObject maybeObject = env.getLateObject();
             if (maybeObject != null
                     && maybeObject.getReflection().isInstanceOf(classEntity))
                 return ObjectInvokeHelper.invokeMethod(maybeObject, method, env, trace, args);
@@ -305,6 +353,10 @@ final public class InvokeHelper {
                     Messages.ERR_NON_STATIC_METHOD_CALLED_DYNAMICALLY,
                     originClassName, originMethodName
             );
+        }
+
+        if (callCache != null) {
+            callCache.put(env, cacheIndex, method);
         }
 
         checkAccess(env, trace, method);
@@ -327,14 +379,23 @@ final public class InvokeHelper {
         return result;
     }
 
+
     public static Memory callStatic(Environment env, TraceInfo trace,
                                     MethodEntity method,
                                     Memory[] args)
             throws Throwable {
+        return callStatic(env, trace, method, args, true);
+    }
+
+    public static Memory callStatic(Environment env, TraceInfo trace,
+                                    MethodEntity method,
+                                    Memory[] args, boolean checkAccess)
+            throws Throwable {
         String originClassName = method.getClazz().getName();
         String originMethodName = method.getName();
 
-        checkAccess(env, trace, method);
+        if (checkAccess)
+            checkAccess(env, trace, method);
 
         Memory[] passed = makeArguments(env, args, method.parameters, originClassName, originMethodName, trace);
         Memory result = method.getImmutableResult();
@@ -342,12 +403,12 @@ final public class InvokeHelper {
             return result;
 
         try {
-            if (trace != null)
+            if (trace != null && method.isUsesStackTrace())
                 env.pushCall(trace, null, args, originMethodName, method.getClazzName(), originClassName);
 
             result = method.invokeStatic(env, passed);
         } finally {
-            if (trace != null)
+            if (trace != null && method.isUsesStackTrace())
                 env.popCall();
         }
 

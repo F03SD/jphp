@@ -1,13 +1,14 @@
 PHP Compiler for JVM
 ====================
 
-[![Build Status](https://travis-ci.org/dim-s/jphp.png?branch=master)](https://travis-ci.org/dim-s/jphp)
+[![Build Status](https://travis-ci.org/jphp-compiler/jphp.svg?branch=master)](https://travis-ci.org/jphp-compiler/jphp)
 
-JPHP is a new implementation for PHP which uses the Java VM. It supports many features of the PHP language (5.3+).
+JPHP is a new implementation for PHP which uses the Java VM. It supports many features of the PHP language (5.4+).
 How does it work? JPHP is a compiler like `javac`, it compiles php sources to JVM bytecode and then
 can execute the result on the Java VM.
 
-Supports: JDK 1.6+ (OpenJDK, Oracle)
++ Supports: JDK 1.6+ (OpenJDK, Oracle)
++ Support Forum: https://groups.google.com/d/forum/jphp-compiler
 
 ### Goals
 
@@ -33,36 +34,22 @@ JPHP is not a replacement for the Zend PHP engine or Facebook HHVM. We don’t p
 + Optional Hot Reloading for classes and functions
 
 
-### Language Features 
+### Language Features
 > (without zend runtime libraries)
 
-+ PHP 5.2+ fully support (with OOP)
-+ Closures (PHP 5.3), auto-binding `$this` in closures (PHP 5.4)
-+ Namespaces fully support (PHP 5.3)
-+ Spl autoloading for classes (PHP 5.3)
-+ Iterators, ArrayAccess, Serializable
-+ Type hinting for classes, arrays, callable (PHP 5.4)
-+ Array short syntax (PHP 5.4)
-+ Ternary short cut "?:", NOWDOC, `__callStatic`, `__invoke` (PHP 5.3)
-+ Late static binding (PHP 5.3)
-+ GC for cyclic references (PHP 5.3)
-+ `Class::{expr}()`, `(new Foo)->bar()` (PHP 5.4)
++ PHP 5.4+ (with OOP)
++ Spl autoloading for classes
++ Iterators, ArrayAccess, Serializable, etc.
++ Reflection classes
 + Try finally (PHP 5.5)
 + Array and string literal dereferencing (PHP 5.5)
 + `__debugInfo` for var_dump (PHP 5.6)
-+ Function array dereferencing has been added, e.g. `foo()[0]` (PHP 5.4) 
-+ Constants can be declared outside a class using the const keyword. (PHP 5.3)
-+ Dynamic access to static methods (PHP 5.3)
-+ Exceptions can be nested (PHP 5.3)
 + `::class` system constant (php 5.5)
 
 **What does not yet support?**
 
-+ Traits (php 5.4)
 + Generators (php 5.5)
-+ Goto (php 5.3)
 + list() in foreach (php 5.5)
-+ Binary number format, e.g. 0b001001101 (php 5.4)
 
 **What non-php features does JPHP support?**
 
@@ -76,7 +63,7 @@ JPHP is not a replacement for the Zend PHP engine or Facebook HHVM. We don’t p
 <dependency>
     <groupId>ru.regenix</groupId>
     <artifactId>jphp-core</artifactId>
-    <version>0.4{-SNAPSHOT}</version>
+    <version>0.4-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -85,11 +72,35 @@ And add our maven repository:
 ```
 <repository>
     <id>DevelNext Repo</id>
-    <url>http://maven.develnext.org/repository/{internal or snapshots}/</url>
+    <url>http://maven.develnext.org/repository/snapshots/</url>
 </repository>
 ```
 
 > **(!)** At present we recomend you to use snapshot versions because the stable version is updated rarely.
+
+### Build Requirements
+
++ Java 1.6+ (OpenJDK or Oracle)
++ Gradle 1.4+ ([http://www.gradle.org/](http://www.gradle.org/))
+
+
+### Using with CLI
+
+Before using with CLI, you should build the CLI version of the JPHP engine. To do that, use the `gradle jar` command:
+
+```
+cd /path/to/jphp_sources/jphp-cli
+gradle jar
+
+cd build/libs
+jphp -v // must show version of JPHP
+```
+
+
+The result of building will be located at `jphp-cli/build/libs`. There will appear a few files - `jphp-cli.jar`, `jphp.bat`, `jphp` and you can use the `jphp` command in your console like this:
+
+    jphp -f /path/to/script.php
+
 
 ### Building JAR with JPHP
 

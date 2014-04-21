@@ -1,14 +1,13 @@
 package org.develnext.jphp.core.tokenizer.token.stmt;
 
+import org.develnext.jphp.core.syntax.VariableStats;
 import php.runtime.common.Modifier;
 import org.develnext.jphp.core.tokenizer.TokenType;
 import org.develnext.jphp.core.tokenizer.TokenMeta;
 import org.develnext.jphp.core.tokenizer.token.expr.value.NameToken;
 import org.develnext.jphp.core.tokenizer.token.expr.value.VariableExprToken;
 
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 public class FunctionStmtToken extends StmtToken {
     protected Modifier modifier;
@@ -21,11 +20,10 @@ public class FunctionStmtToken extends StmtToken {
     protected BodyStmtToken body;
     protected boolean interfacable;
 
+    protected Map<String, LabelStmtToken> labels;
+    protected Map<String, VariableStats> variables;
+
     protected Set<VariableExprToken> local;
-    protected Set<VariableExprToken> passedLocal;
-    protected Set<VariableExprToken> arrayAccessLocal;
-    protected Set<VariableExprToken> refLocal;
-    protected Set<VariableExprToken> unstableLocal;
     protected Set<VariableExprToken> staticLocal;
 
     protected boolean dynamicLocal;
@@ -43,11 +41,9 @@ public class FunctionStmtToken extends StmtToken {
         this.callsExist = false;
         this.varsExists = false;
         this.thisExists = false;
-        this.passedLocal = new HashSet<VariableExprToken>();
-        this.arrayAccessLocal = new HashSet<VariableExprToken>();
-        this.refLocal = new HashSet<VariableExprToken>();
-        this.unstableLocal = new HashSet<VariableExprToken>();
+
         this.staticLocal = new HashSet<VariableExprToken>();
+        this.variables = new LinkedHashMap<String, VariableStats>();
     }
 
     public Set<VariableExprToken> getStaticLocal() {
@@ -102,22 +98,6 @@ public class FunctionStmtToken extends StmtToken {
         this.uses = uses;
     }
 
-    public Set<VariableExprToken> getRefLocal() {
-        return refLocal;
-    }
-
-    public void setRefLocal(Set<VariableExprToken> refLocal) {
-        this.refLocal = refLocal;
-    }
-
-    public Set<VariableExprToken> getUnstableLocal() {
-        return unstableLocal;
-    }
-
-    public void setUnstableLocal(Set<VariableExprToken> unstableLocal) {
-        this.unstableLocal = unstableLocal;
-    }
-
     public boolean isReturnReference() {
         return returnReference;
     }
@@ -159,12 +139,8 @@ public class FunctionStmtToken extends StmtToken {
         this.thisExists = local.contains(thisVariable);
     }
 
-    public Set<VariableExprToken> getPassedLocal() {
-        return passedLocal;
-    }
-
-    public void setPassedLocal(Set<VariableExprToken> passedLocal) {
-        this.passedLocal = passedLocal;
+    public void setLabels(Map<String, LabelStmtToken> labels) {
+        this.labels = labels;
     }
 
     public boolean isDynamicLocal() {
@@ -184,12 +160,13 @@ public class FunctionStmtToken extends StmtToken {
     }
 
     public boolean isReference(VariableExprToken variable){
-        return dynamicLocal || arrayAccessLocal.contains(variable) || passedLocal.contains(variable)
-                || refLocal.contains(variable);
+        VariableStats stats = variable(variable);
+
+        return dynamicLocal || stats.isArrayAccess() || stats.isPassed() || stats.isReference();
     }
 
     public boolean isUnstableVariable(VariableExprToken variable){
-        return unstableLocal.contains(variable);
+        return variable(variable).isUnstable();
     }
 
     public boolean isVarsExists() {
@@ -202,14 +179,6 @@ public class FunctionStmtToken extends StmtToken {
 
     public boolean isMutable(){
         return varsExists || callsExist;
-    }
-
-    public Set<VariableExprToken> getArrayAccessLocal() {
-        return arrayAccessLocal;
-    }
-
-    public void setArrayAccessLocal(Set<VariableExprToken> arrayAccessLocal) {
-        this.arrayAccessLocal = arrayAccessLocal;
     }
 
     public String getFulledName(char delimiter){
@@ -236,5 +205,35 @@ public class FunctionStmtToken extends StmtToken {
 
     public int getId() {
         return id;
+    }
+
+    public boolean addLabel(LabelStmtToken labelStmtToken) {
+        if (labels == null)
+            labels = new LinkedHashMap<String, LabelStmtToken>();
+
+        return labels.put(labelStmtToken.getName().toLowerCase(), labelStmtToken) == null;
+    }
+
+    public LabelStmtToken findLabel(String name) {
+        if (labels == null)
+            return null;
+
+        return labels.get(name.toLowerCase());
+    }
+
+    public VariableStats variable(String name) {
+        VariableStats stats = variables.get(name);
+        if (stats == null)
+            variables.put(name, stats = new VariableStats());
+
+        return stats;
+    }
+
+    public VariableStats variable(VariableExprToken token) {
+        return variable(token.getName());
+    }
+
+    public boolean isUnusedVariable(VariableExprToken token) {
+        return !dynamicLocal && variable(token).isUnused();
     }
 }

@@ -1,31 +1,32 @@
 package org.develnext.jphp.core.compiler.jvm;
 
+import org.develnext.jphp.core.syntax.SyntaxAnalyzer;
+import org.develnext.jphp.core.tester.Test;
+import org.develnext.jphp.core.tokenizer.Tokenizer;
+import org.develnext.jphp.core.tokenizer.token.Token;
+import org.develnext.jphp.zend.ext.standard.StringFunctions;
 import org.junit.Assert;
 import php.runtime.Memory;
+import php.runtime.env.CompileScope;
 import php.runtime.env.Context;
 import php.runtime.env.Environment;
 import php.runtime.env.TraceInfo;
-import php.runtime.ext.BCMathExtension;
-import php.runtime.ext.CTypeExtension;
+import php.runtime.exceptions.CustomErrorException;
+import php.runtime.exceptions.support.ErrorException;
+import php.runtime.exceptions.support.ErrorType;
 import php.runtime.ext.CoreExtension;
 import php.runtime.ext.SPLExtension;
-import php.runtime.ext.core.StringFunctions;
 import php.runtime.lang.UncaughtException;
 import php.runtime.loader.dump.ModuleDumper;
 import php.runtime.memory.ArrayMemory;
 import php.runtime.reflection.ClassEntity;
 import php.runtime.reflection.ModuleEntity;
 import php.runtime.util.PrintF;
-import php.runtime.env.CompileScope;
-import php.runtime.exceptions.CustomErrorException;
-import php.runtime.exceptions.support.ErrorException;
-import php.runtime.exceptions.support.ErrorType;
-import org.develnext.jphp.core.syntax.SyntaxAnalyzer;
-import org.develnext.jphp.core.tester.Test;
-import org.develnext.jphp.core.tokenizer.Tokenizer;
-import org.develnext.jphp.core.tokenizer.token.Token;
 
-import java.io.*;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
 import java.util.List;
 
 abstract public class JvmCompilerCase {
@@ -38,8 +39,6 @@ abstract public class JvmCompilerCase {
         compileScope.setDebugMode(true);
 
         compileScope.registerExtension(new CoreExtension());
-        compileScope.registerExtension(new BCMathExtension());
-        compileScope.registerExtension(new CTypeExtension());
         compileScope.registerExtension(new SPLExtension());
 
         return compileScope;
@@ -156,10 +155,18 @@ abstract public class JvmCompilerCase {
     }
 
     public void check(String name){
-        check(name, false);
+        check(name, false, -1);
     }
 
-    public void check(String name, boolean withErrors){
+    public void check(String name, boolean withErrors) {
+        check(name, withErrors, -1);
+    }
+
+    public void check(String name, int errorFlags) {
+        check(name, false, errorFlags);
+    }
+
+    public void check(String name, boolean withErrors, int errorFlags){
         File file;
         ByteArrayOutputStream outputR = new ByteArrayOutputStream();
         Environment environment = new Environment(newScope(), outputR);
@@ -173,6 +180,9 @@ abstract public class JvmCompilerCase {
         try {
             JvmCompiler compiler = new JvmCompiler(environment, context, getSyntax(context));
             environment.setErrorFlags(0);
+            if (errorFlags != -1)
+                environment.setErrorFlags(errorFlags);
+
             ModuleEntity module = compiler.compile(false);
 
             ByteArrayOutputStream output = new ByteArrayOutputStream();

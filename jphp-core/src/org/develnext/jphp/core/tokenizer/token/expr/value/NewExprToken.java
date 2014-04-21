@@ -10,6 +10,7 @@ import java.util.List;
 
 public class NewExprToken extends ValueExprToken implements CallableExprToken {
     private Token name;
+    private ExprStmtToken exprName;
     private List<ExprStmtToken> parameters;
 
     public NewExprToken(TokenMeta meta) {
@@ -24,8 +25,12 @@ public class NewExprToken extends ValueExprToken implements CallableExprToken {
         this.name = name;
     }
 
-    public void setName(VariableExprToken name){
+    public void setName(SelfExprToken name) {
         this.name = name;
+    }
+
+    public void setName(ExprStmtToken name){
+        this.exprName = name;
     }
 
     public void setName(StaticExprToken name){
@@ -33,7 +38,7 @@ public class NewExprToken extends ValueExprToken implements CallableExprToken {
     }
 
     public boolean isDynamic(){
-        return name instanceof VariableExprToken;
+        return exprName != null;
     }
 
     public List<ExprStmtToken> getParameters() {
@@ -42,5 +47,14 @@ public class NewExprToken extends ValueExprToken implements CallableExprToken {
 
     public void setParameters(List<ExprStmtToken> parameters) {
         this.parameters = parameters;
+    }
+
+    @Override
+    public boolean isNamedToken() {
+        return true;
+    }
+
+    public ExprStmtToken getExprName() {
+        return exprName;
     }
 }

@@ -1,5 +1,7 @@
 package php.runtime.env;
 
+import org.develnext.jphp.core.compiler.jvm.JvmCompiler;
+import php.runtime.Information;
 import php.runtime.Memory;
 import php.runtime.annotation.Reflection;
 import php.runtime.common.Constants;
@@ -31,12 +33,8 @@ import php.runtime.memory.ObjectMemory;
 import php.runtime.memory.ReferenceMemory;
 import php.runtime.memory.StringMemory;
 import php.runtime.output.OutputBuffer;
-import php.runtime.reflection.ClassEntity;
-import php.runtime.reflection.ConstantEntity;
-import php.runtime.reflection.FunctionEntity;
-import php.runtime.reflection.ModuleEntity;
+import php.runtime.reflection.*;
 import php.runtime.util.JVMStackTracer;
-import org.develnext.jphp.core.compiler.jvm.JvmCompiler;
 
 import java.io.File;
 import java.io.OutputStream;
@@ -46,10 +44,12 @@ import java.lang.ref.WeakReference;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.charset.Charset;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static php.runtime.exceptions.support.ErrorType.*;
 
 public class Environment {
+    public final int id;
     public final CompileScope scope;
     public final Map<String, Memory> configuration = new HashMap<String, Memory>();
     public final static Map<String, ConfigChangeHandler> configurationHandler;
@@ -69,6 +69,7 @@ public class Environment {
     private ErrorReportHandler errorReportHandler;
     private ErrorHandler previousErrorHandler;
     private ErrorHandler errorHandler;
+    private ShellExecHandler shellExecHandler = ShellExecHandler.DEFAULT;
 
     private ExceptionHandler previousExceptionHandler;
     private ExceptionHandler exceptionHandler = ExceptionHandler.DEFAULT;
@@ -113,6 +114,8 @@ public class Environment {
 
     private final ReferenceQueue<IObject> gcObjectRefQueue = new ReferenceQueue<IObject>();
     private final Set<WeakReference<IObject>> gcObjects = new HashSet<WeakReference<IObject>>();
+    private static final AtomicInteger ids = new AtomicInteger();
+    private static final Stack<Integer> freeIds = new Stack<Integer>();
 
     public void doFinal() throws Throwable {
         for (ShutdownHandler handler : shutdownFunctions){
@@ -137,6 +140,12 @@ public class Environment {
         finalizeObjects();
         flushAll();
         lastMessage = null;
+    }
+
+    @Override
+    protected void finalize() throws Throwable {
+        super.finalize();
+        freeIds.push(id);
     }
 
     /**
@@ -181,7 +190,7 @@ public class Environment {
         this(parent.scope, parent.defaultBuffer.getOutput());
 
         configuration.putAll(parent.configuration);
-        constants.putAll(parent.constants);
+        //constants.putAll(parent.constants);
 
         classMap.putAll(parent.classMap);
         for(ClassEntity e : classMap.values()) {
@@ -200,6 +209,14 @@ public class Environment {
 
     public Environment(CompileScope scope, OutputStream output) {
         this.scope = scope;
+        synchronized (freeIds) {
+            if (freeIds.empty()) {
+                this.id = ids.getAndIncrement();
+            } else {
+                this.id = freeIds.peek();
+            }
+        }
+
         this.outputBuffers = new Stack<OutputBuffer>();
 
         this.defaultBuffer = new OutputBuffer(this, null);
@@ -288,9 +305,13 @@ public class Environment {
     }
 
     public TraceInfo trace(){
-        if (callStackTop == 0)
+        if (callStackTop <= 0)
             return TraceInfo.UNKNOWN;
         return peekCall(0).trace;
+    }
+
+    public TraceInfo trace(int systemOffsetStackTrace){
+        return new TraceInfo(Thread.currentThread().getStackTrace()[systemOffsetStackTrace]);
     }
 
     public int getCallStackTop(){
@@ -486,7 +507,7 @@ public class Environment {
     }
 
     public Memory findConstant(String name, String nameLower){
-        ConstantEntity entity = constants.get(nameLower);
+        ConstantEntity entity = constantMap.get(nameLower);
         if (entity != null) {
             if (!entity.caseSensitise || name.equals(entity.getName()))
                 return entity.getValue();
@@ -508,7 +529,7 @@ public class Environment {
         if (constant != null)
             return false;
 
-        constants.put(name.toLowerCase(), new ConstantEntity(name, value, caseSensitise));
+        constantMap.put(name.toLowerCase(), new ConstantEntity(name, value, caseSensitise));
         return true;
     }
 
@@ -614,6 +635,14 @@ public class Environment {
 
     public SystemMessage getLastMessage() {
         return lastMessage;
+    }
+
+    public ShellExecHandler getShellExecHandler() {
+        return shellExecHandler;
+    }
+
+    public void setShellExecHandler(ShellExecHandler shellExecHandler) {
+        this.shellExecHandler = shellExecHandler;
     }
 
     public ExceptionHandler getExceptionHandler() {
@@ -910,6 +939,7 @@ public class Environment {
         for(ClassEntity entity : module.getClasses()) {
             if (entity.isStatic()){
                 classMap.put(entity.getLowerName(), entity);
+                //entity.initEnvironment(this); // TODO : check and fix for traits
             }
         }
 
@@ -929,7 +959,11 @@ public class Environment {
 
         if (constant == null){
             error(trace, E_NOTICE, Messages.ERR_USE_UNDEFINED_CONSTANT, name, name);
-            return StringMemory.valueOf(name);
+            int p = name.lastIndexOf(Information.NAMESPACE_SEP_CHAR);
+            if (p > -1) // for global scope
+                return StringMemory.valueOf(name.substring(p + 1));
+            else
+                return StringMemory.valueOf(name);
         }
 
         return constant;
@@ -977,7 +1011,7 @@ public class Environment {
             throws Throwable {
         File file = new File(fileName);
         if (!file.exists()){
-            error(trace, E_ERROR, Messages.ERR_CALL_TO_UNDEFINED_FUNCTION.fetch("require", fileName));
+            error(trace, E_ERROR, Messages.ERR_REQUIRE_FAILED.fetch("require", fileName));
             return Memory.NULL;
         } else {
             ModuleEntity module = importModule(new Context(file, getDefaultCharset()));
@@ -1125,8 +1159,29 @@ public class Environment {
         setErrorFlags(flags);
     }
 
-    public void __defineFunction(TraceInfo trace, int moduleIndex, int index){
-        ModuleEntity module = scope.moduleIndexMap.get(moduleIndex);
+    public Memory __getMacroClass() {
+        CallStackItem item = peekCall(0);
+        if (item != null && item.clazz != null){
+            if (item.classEntity == null)
+                item.classEntity = fetchClass(item.clazz, false);
+
+            if (item.classEntity == null)
+                return Memory.CONST_EMPTY_STRING;
+            else {
+                MethodEntity method = item.classEntity.findMethod(item.function);
+                if (method == null)
+                    return Memory.CONST_EMPTY_STRING;
+                return new StringMemory(method.getClazz().getName());
+            }
+        } else
+            return Memory.CONST_EMPTY_STRING;
+    }
+
+    public void __defineFunction(TraceInfo trace, String moduleInternalName, int index){
+        ModuleEntity module = scope.moduleIndexMap.get(moduleInternalName);
+        if (module == null)
+            throw new CriticalException("Cannot find module: " + moduleInternalName);
+
         FunctionEntity function = module.findFunction(index);
 
         if (functionMap.put(function.getLowerName(), function) != null){
@@ -1135,6 +1190,12 @@ public class Environment {
                     trace
             ));
         }
+    }
+
+    public String __shellExecute(String s) {
+        if (shellExecHandler != null)
+            return shellExecHandler.onExecute(s);
+        return "";
     }
 
     public void die(Memory value) {
@@ -1242,6 +1303,21 @@ public class Environment {
 
     public String __getParent(TraceInfo trace){
         return __getParentClass(trace).getName();
+    }
+
+    public String __getParent(TraceInfo trace, String className){
+        ClassEntity o = fetchClass(className, true);
+        if (o == null) {
+            error(trace, ErrorType.E_ERROR, Messages.ERR_CLASS_NOT_FOUND, className);
+            return null;
+        }
+
+        if (o.getParent() == null) {
+            error(trace, "Cannot access parent:: when current class scope has no parent");
+            return null;
+        }
+
+        return o.getParent().getName();
     }
 
     public void registerAutoloader(SplClassLoader classLoader, boolean prepend){
